@@ -1,5 +1,7 @@
 from datetime import datetime
 from chatterbot.logic import LogicAdapter
+from chatterbot.conversation import Statement
+from chatterbot.exceptions import OptionalDependencyImportError
 
 
 class TimeLogicAdapter(LogicAdapter):
@@ -17,7 +19,15 @@ class TimeLogicAdapter(LogicAdapter):
 
     def __init__(self, chatbot, **kwargs):
         super().__init__(chatbot, **kwargs)
-        from nltk import NaiveBayesClassifier
+        try:
+            from nltk import NaiveBayesClassifier
+        except ImportError:
+            message = (
+                'Unable to import "nltk".\n'
+                'Please install "nltk" before using the TimeLogicAdapter:\n'
+                'pip3 install nltk'
+            )
+            raise OptionalDependencyImportError(message)
 
         self.positive = kwargs.get('positive', [
             'what time is it',
@@ -80,9 +90,7 @@ class TimeLogicAdapter(LogicAdapter):
 
         return features
 
-    def process(self, statement):
-        from chatterbot.conversation import Statement
-
+    def process(self, statement, additional_response_selection_parameters=None):
         now = datetime.now()
 
         time_features = self.time_question_features(statement.text.lower())

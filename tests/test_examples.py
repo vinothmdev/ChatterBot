@@ -10,18 +10,15 @@ class ExamplesSmokeTestCase(TestCase):
     def test_basic_example(self):
         from examples import basic_example # NOQA
 
+    def test_convert_units(self):
+        from examples import convert_units # NOQA
+
     def test_default_response_example(self):
         from examples import default_response_example # NOQA
 
     def test_export_example(self):
         self.skipTest(
             'This is being skipped to avoid creating files during tests.'
-        )
-
-    def test_gitter_example(self):
-        self.skipTest(
-            'This is being skipped because keys for this '
-            'API are not included in the public repository.'
         )
 
     def test_learning_feedback_example(self):
@@ -31,23 +28,17 @@ class ExamplesSmokeTestCase(TestCase):
             'terminate on its own.'
         )
 
-    def test_mailgun_example(self):
-        self.skipTest(
-            'This is being skipped because keys for this '
-            'API are not included in the public repository.'
-        )
-
     def test_math_and_time(self):
         from examples import math_and_time # NOQA
 
-    def test_microsoft_bot(self):
-        self.skipTest(
-            'This is being skipped because keys for this '
-            'API are not included in the public repository.'
-        )
+    def test_memory_sql_example(self):
+        from examples import memory_sql_example # NOQA
 
     def test_specific_response_example(self):
         from examples import specific_response_example # NOQA
+
+    def test_tagged_dataset_example(self):
+        from examples import tagged_dataset_example # NOQA
 
     def test_terminal_example(self):
         self.skipTest(
@@ -69,13 +60,13 @@ class ExamplesSmokeTestCase(TestCase):
             'a GUI during testing.'
         )
 
-    def test_twitter_training_example(self):
-        self.skipTest(
-            'This is being skipped because keys for this '
-            'API are not included in the public repository.'
-        )
+    def test_training_example_chatterbot_corpus(self):
+        from examples import training_example_chatterbot_corpus # NOQA
 
-    def test_ubuntu_corpus_training_example(self):
+    def test_training_example_list_data(self):
+        from examples import training_example_list_data # NOQA
+
+    def test_training_example_ubuntu_corpus(self):
         self.skipTest(
             'This test is being skipped because it takes '
             'hours to download and train from this corpus.'

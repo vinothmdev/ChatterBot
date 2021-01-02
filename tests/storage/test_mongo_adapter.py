@@ -116,6 +116,12 @@ class MongoDatabaseAdapterTestCase(MongoAdapterTestCase):
 
         self.assertEqual(random_statement.text, text)
 
+    def test_get_random_no_data(self):
+        from chatterbot.storage import StorageAdapter
+
+        with self.assertRaises(StorageAdapter.EmptyDatabaseException):
+            self.adapter.get_random()
+
     def test_mongo_to_object(self):
         self.adapter.create(text='Hello', in_response_to='Hi')
         statement_data = self.adapter.statements.find_one({'text': 'Hello'})
@@ -177,9 +183,14 @@ class MongoAdapterFilterTestCase(MongoAdapterTestCase):
         self.adapter.update(statement2)
 
         results = list(self.adapter.filter(in_response_to=[]))
+
+        results_text = [
+            result.text for result in results
+        ]
+
         self.assertEqual(len(results), 2)
-        self.assertIn(statement1, results)
-        self.assertIn(statement2, results)
+        self.assertIn(statement1.text, results_text)
+        self.assertIn(statement2.text, results_text)
 
     def test_filter_no_parameters(self):
         """
@@ -235,6 +246,20 @@ class MongoAdapterFilterTestCase(MongoAdapterTestCase):
         self.assertIn("Hi everyone!", results_text_list)
         self.assertIn("The air contains Oxygen.", results_text_list)
 
+    def test_filter_page_size(self):
+        self.adapter.create(text='A')
+        self.adapter.create(text='B')
+        self.adapter.create(text='C')
+
+        results = self.adapter.filter(page_size=2)
+
+        results_text_list = [statement.text for statement in results]
+
+        self.assertEqual(len(results_text_list), 3)
+        self.assertIn('A', results_text_list)
+        self.assertIn('B', results_text_list)
+        self.assertIn('C', results_text_list)
+
     def test_exclude_text(self):
         self.adapter.create(text='Hello!')
         self.adapter.create(text='Hi everyone!')
@@ -273,6 +298,27 @@ class MongoAdapterFilterTestCase(MongoAdapterTestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].text, 'Hi everyone!')
 
+    def test_search_text_contains(self):
+        self.adapter.create(text='Hello!', search_text='hello exclamation')
+        self.adapter.create(text='Hi everyone!', search_text='hi everyone')
+
+        results = list(self.adapter.filter(
+            search_text_contains='everyone'
+        ))
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].text, 'Hi everyone!')
+
+    def test_search_text_contains_multiple_matches(self):
+        self.adapter.create(text='Hello!', search_text='hello exclamation')
+        self.adapter.create(text='Hi everyone!', search_text='hi everyone')
+
+        results = list(self.adapter.filter(
+            search_text_contains='hello everyone'
+        ))
+
+        self.assertEqual(len(results), 2)
+
 
 class MongoOrderingTestCase(MongoAdapterTestCase):
     """
@@ -289,8 +335,8 @@ class MongoOrderingTestCase(MongoAdapterTestCase):
         results = list(self.adapter.filter(order_by=['text']))
 
         self.assertEqual(len(results), 2)
-        self.assertEqual(results[0], statement_a)
-        self.assertEqual(results[1], statement_b)
+        self.assertEqual(statement_a.text, results[0].text)
+        self.assertEqual(statement_b.text, results[1].text)
 
     def test_order_by_created_at(self):
         from datetime import datetime, timedelta
@@ -313,8 +359,8 @@ class MongoOrderingTestCase(MongoAdapterTestCase):
         results = list(self.adapter.filter(order_by=['created_at']))
 
         self.assertEqual(len(results), 2)
-        self.assertEqual(results[0], statement_a)
-        self.assertEqual(results[1], statement_b)
+        self.assertEqual(statement_a.text, results[0].text)
+        self.assertEqual(statement_b.text, results[1].text)
 
 
 class StorageAdapterCreateTestCase(MongoAdapterTestCase):

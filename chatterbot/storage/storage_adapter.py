@@ -1,5 +1,6 @@
 import logging
-from chatterbot.stemming import SimpleStemmer
+from chatterbot import languages
+from chatterbot.tagging import PosLemmaTagger
 
 
 class StorageAdapter(object):
@@ -11,31 +12,51 @@ class StorageAdapter(object):
     def __init__(self, *args, **kwargs):
         """
         Initialize common attributes shared by all storage adapters.
-        """
-        self.kwargs = kwargs
-        self.logger = kwargs.get('logger', logging.getLogger(__name__))
-        self.adapter_supports_queries = True
 
-        self.stemmer = SimpleStemmer(language=kwargs.get(
-            'stemmer_language', 'english'
+        :param str tagger_language: The language that the tagger uses to remove stopwords.
+        """
+        self.logger = kwargs.get('logger', logging.getLogger(__name__))
+
+        Tagger = kwargs.get('tagger', PosLemmaTagger)
+
+        self.tagger = Tagger(language=kwargs.get(
+            'tagger_language', languages.ENG
         ))
 
     def get_model(self, model_name):
         """
         Return the model class for a given model name.
+
+        model_name is case insensitive.
         """
-
-        # The string must be lowercase
-        model_name = model_name.lower()
-
-        kwarg_model_key = '%s_model' % (model_name, )
-
-        if kwarg_model_key in self.kwargs:
-            return self.kwargs.get(kwarg_model_key)
-
-        get_model_method = getattr(self, 'get_%s_model' % (model_name, ))
+        get_model_method = getattr(self, 'get_%s_model' % (
+            model_name.lower(),
+        ))
 
         return get_model_method()
+
+    def get_object(self, object_name):
+        """
+        Return the class for a given object name.
+
+        object_name is case insensitive.
+        """
+        get_model_method = getattr(self, 'get_%s_object' % (
+            object_name.lower(),
+        ))
+
+        return get_model_method()
+
+    def get_statement_object(self):
+        from chatterbot.conversation import Statement
+
+        StatementModel = self.get_model('statement')
+
+        Statement.statement_field_names.extend(
+            StatementModel.extra_statement_field_names
+        )
+
+        return Statement
 
     def count(self):
         """
@@ -88,6 +109,12 @@ class StorageAdapter(object):
         :param persona_not_startswith: If the ``persona`` field of a
             statement starts with the value specified by this parameter,
             then the statement will not be returned in the result set.
+            Defaults to None
+
+        :param search_text_contains: If the ``search_text`` field of a
+            statement contains a word that is in the string provided to
+            this parameter, then the statement will be included in the
+            result set.
             Defaults to None
         """
         raise self.AdapterMethodNotImplementedError(

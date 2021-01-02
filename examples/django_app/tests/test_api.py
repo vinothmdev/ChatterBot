@@ -6,7 +6,7 @@ from django.urls import reverse
 class ApiTestCase(TestCase):
 
     def setUp(self):
-        super(ApiTestCase, self).setUp()
+        super().setUp()
         self.api_url = reverse('chatterbot')
 
     def test_invalid_text(self):
@@ -94,7 +94,7 @@ class ApiTestCase(TestCase):
         self.assertIn('text', response.json())
         self.assertIn('in_response_to', response.json())
         self.assertIn('tags', response.json())
-        self.assertIn('user:jen@example.com', response.json()['tags'])
+        self.assertEqual(response.json()['tags'], [])
 
     def test_get(self):
         response = self.client.get(self.api_url)

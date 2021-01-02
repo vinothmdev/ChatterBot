@@ -1,5 +1,7 @@
 from chatterbot.adapters import Adapter
-from chatterbot.utils import import_module
+from chatterbot.storage import StorageAdapter
+from chatterbot.search import IndexedTextSearch
+from chatterbot.conversation import Statement
 
 
 class LogicAdapter(Adapter):
@@ -7,12 +9,9 @@ class LogicAdapter(Adapter):
     This is an abstract class that represents the interface
     that all logic adapters should implement.
 
-    :param statement_comparison_function: The dot-notated import path
-        to a statement comparison function.
-        Defaults to ``levenshtein_distance``.
-
-    :param response_selection_method: The a response selection method.
-        Defaults to ``get_first_response``.
+    :param search_algorithm_name: The name of the search algorithm that should
+        be used to search for close matches to the provided input.
+        Defaults to the value of ``Search.name``.
 
     :param maximum_similarity_threshold:
         The maximum amount of similarity between two statement that is required
@@ -21,49 +20,32 @@ class LogicAdapter(Adapter):
         is found or the search set is exhausted.
         Defaults to 0.95
 
-    :param excluded_words:
-        The excluded_words parameter allows a list of words to be set that will
-        prevent the logic adapter from returning statements that have text
-        containing any of those words. This can be useful for preventing your
-        chat bot from saying swears when it is being demonstrated in front of
-        an audience.
-        Defaults to None
+    :param response_selection_method:
+          The a response selection method.
+          Defaults to ``get_first_response``
+    :type response_selection_method: collections.abc.Callable
 
-    :param search_page_size:
-        The maximum number of records to load into memory at a time when searching
-        Defaults to 1000
+    :param default_response:
+          The default response returned by this logic adaper
+          if there is no other possible response to return.
+    :type default_response: str or list or tuple
     """
 
     def __init__(self, chatbot, **kwargs):
         super().__init__(chatbot, **kwargs)
-        from chatterbot.comparisons import levenshtein_distance
         from chatterbot.response_selection import get_first_response
 
-        # Import string module parameters
-        if 'statement_comparison_function' in kwargs:
-            import_path = kwargs.get('statement_comparison_function')
-            if isinstance(import_path, str):
-                kwargs['statement_comparison_function'] = import_module(import_path)
+        self.search_algorithm_name = kwargs.get(
+            'search_algorithm_name',
+            IndexedTextSearch.name
+        )
 
-        if 'response_selection_method' in kwargs:
-            import_path = kwargs.get('response_selection_method')
-            if isinstance(import_path, str):
-                kwargs['response_selection_method'] = import_module(import_path)
+        self.search_algorithm = self.chatbot.search_algorithms[
+            self.search_algorithm_name
+        ]
 
         self.maximum_similarity_threshold = kwargs.get(
             'maximum_similarity_threshold', 0.95
-        )
-
-        self.excluded_words = kwargs.get('excluded_words')
-
-        self.search_page_size = kwargs.get(
-            'search_page_size', 1000
-        )
-
-        # By default, compare statements using Levenshtein distance
-        self.compare_statements = kwargs.get(
-            'statement_comparison_function',
-            levenshtein_distance
         )
 
         # By default, select the first available response
@@ -71,6 +53,18 @@ class LogicAdapter(Adapter):
             'response_selection_method',
             get_first_response
         )
+
+        default_responses = kwargs.get('default_response', [])
+
+        # Convert a single string into a list
+        if isinstance(default_responses, str):
+            default_responses = [
+                default_responses
+            ]
+
+        self.default_responses = [
+            Statement(text=default) for default in default_responses
+        ]
 
     def can_process(self, statement):
         """
@@ -83,7 +77,7 @@ class LogicAdapter(Adapter):
         """
         return True
 
-    def process(self, statement):
+    def process(self, statement, additional_response_selection_parameters=None):
         """
         Override this method and implement your logic for selecting a response to an input statement.
 
@@ -98,9 +92,37 @@ class LogicAdapter(Adapter):
         :param statement: An input statement to be processed by the logic adapter.
         :type statement: Statement
 
+        :param additional_response_selection_parameters: Parameters to be used when
+            filtering results to choose a response from.
+        :type additional_response_selection_parameters: dict
+
         :rtype: Statement
         """
         raise self.AdapterMethodNotImplementedError()
+
+    def get_default_response(self, input_statement):
+        """
+        This method is called when a logic adapter is unable to generate any
+        other meaningful response.
+        """
+        from random import choice
+
+        if self.default_responses:
+            response = choice(self.default_responses)
+        else:
+            try:
+                response = self.chatbot.storage.get_random()
+            except StorageAdapter.EmptyDatabaseException:
+                response = input_statement
+
+        self.chatbot.logger.info(
+            'No known response to the input was found. Selecting a random response.'
+        )
+
+        # Set confidence to zero because a random response is selected
+        response.confidence = 0
+
+        return response
 
     @property
     def class_name(self):

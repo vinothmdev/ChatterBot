@@ -19,6 +19,12 @@ class ModelBase(object):
         """
         return cls.__name__.lower()
 
+    id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
 
 Base = declarative_base(cls=ModelBase)
 
@@ -26,7 +32,7 @@ Base = declarative_base(cls=ModelBase)
 tag_association_table = Table(
     'tag_association',
     Base.metadata,
-    Column('tag_name', Integer, ForeignKey('tag.name')),
+    Column('tag_id', Integer, ForeignKey('tag.id')),
     Column('statement_id', Integer, ForeignKey('statement.id'))
 )
 
@@ -38,7 +44,7 @@ class Tag(Base):
 
     name = Column(
         String(constants.TAG_NAME_MAX_LENGTH),
-        primary_key=True
+        unique=True
     )
 
 
@@ -47,11 +53,7 @@ class Statement(Base, StatementMixin):
     A Statement represents a sentence or phrase.
     """
 
-    id = Column(
-        Integer,
-        primary_key=True,
-        autoincrement=True
-    )
+    confidence = 0
 
     text = Column(
         String(constants.STATEMENT_TEXT_MAX_LENGTH)
@@ -102,3 +104,11 @@ class Statement(Base, StatementMixin):
         Return a list of tags for this statement.
         """
         return [tag.name for tag in self.tags]
+
+    def add_tags(self, *tags):
+        """
+        Add a list of strings to the statement as tags.
+        """
+        self.tags.extend([
+            Tag(name=tag) for tag in tags
+        ])

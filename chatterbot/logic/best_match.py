@@ -6,46 +6,36 @@ class BestMatch(LogicAdapter):
     """
     A logic adapter that returns a response based on known responses to
     the closest matches to the input statement.
+
+    :param excluded_words:
+        The excluded_words parameter allows a list of words to be set that will
+        prevent the logic adapter from returning statements that have text
+        containing any of those words. This can be useful for preventing your
+        chat bot from saying swears when it is being demonstrated in front of
+        an audience.
+        Defaults to None
+    :type excluded_words: list
     """
 
-    def get(self, input_statement):
-        """
-        Takes a statement string and a list of statement strings.
-        Returns the closest matching statement from the list.
-        """
-        statement_list = self.chatbot.storage.filter(
-            persona_not_startswith='bot:',
-            page_size=self.search_page_size
-        )
+    def __init__(self, chatbot, **kwargs):
+        super().__init__(chatbot, **kwargs)
 
-        closest_match = input_statement
-        closest_match.confidence = 0
+        self.excluded_words = kwargs.get('excluded_words')
 
-        # Find the closest matching known statement
-        for statement in statement_list:
-            confidence = self.compare_statements(input_statement, statement)
+    def process(self, input_statement, additional_response_selection_parameters=None):
+        search_results = self.search_algorithm.search(input_statement)
 
-            if confidence > closest_match.confidence:
-                statement.confidence = confidence
-                closest_match = statement
+        # Use the input statement as the closest match if no other results are found
+        closest_match = next(search_results, input_statement)
+
+        # Search for the closest match to the input statement
+        for result in search_results:
+            closest_match = result
 
             # Stop searching if a match that is close enough is found
-            if closest_match.confidence >= self.maximum_similarity_threshold:
+            if result.confidence >= self.maximum_similarity_threshold:
                 break
 
-        return closest_match
-
-    def can_process(self, statement):
-        """
-        Check that the chatbot's storage adapter is available to the logic
-        adapter and there is at least one statement in the database.
-        """
-        return self.chatbot.storage.count()
-
-    def process(self, input_statement):
-
-        # Select the closest match to the input statement
-        closest_match = self.get(input_statement)
         self.chatbot.logger.info('Using "{}" as a close match to "{}" with a confidence of {}'.format(
             closest_match.text, input_statement.text, closest_match.confidence
         ))
@@ -55,12 +45,37 @@ class BestMatch(LogicAdapter):
             input_statement.conversation
         )
 
+        for index, recent_repeated_response in enumerate(recent_repeated_responses):
+            self.chatbot.logger.info('{}. Excluding recent repeated response of "{}"'.format(
+                index, recent_repeated_response
+            ))
+
+        response_selection_parameters = {
+            'search_in_response_to': closest_match.search_text,
+            'exclude_text': recent_repeated_responses,
+            'exclude_text_words': self.excluded_words
+        }
+
+        alternate_response_selection_parameters = {
+            'search_in_response_to': self.chatbot.storage.tagger.get_text_index_string(
+                input_statement.text
+            ),
+            'exclude_text': recent_repeated_responses,
+            'exclude_text_words': self.excluded_words
+        }
+
+        if additional_response_selection_parameters:
+            response_selection_parameters.update(additional_response_selection_parameters)
+            alternate_response_selection_parameters.update(additional_response_selection_parameters)
+
         # Get all statements that are in response to the closest match
-        response_list = list(self.chatbot.storage.filter(
-            search_in_response_to=closest_match.search_text,
-            exclude_text=recent_repeated_responses,
-            exclude_text_words=self.excluded_words
-        ))
+        response_list = list(self.chatbot.storage.filter(**response_selection_parameters))
+
+        alternate_response_list = []
+
+        if not response_list:
+            self.chatbot.logger.info('No responses found. Generating alternate response list.')
+            alternate_response_list = list(self.chatbot.storage.filter(**alternate_response_selection_parameters))
 
         if response_list:
             self.chatbot.logger.info(
@@ -68,6 +83,7 @@ class BestMatch(LogicAdapter):
                     len(response_list)
                 )
             )
+
             response = self.select_response(
                 input_statement,
                 response_list,
@@ -76,15 +92,25 @@ class BestMatch(LogicAdapter):
 
             response.confidence = closest_match.confidence
             self.chatbot.logger.info('Response selected. Using "{}"'.format(response.text))
-        else:
-            response = self.chatbot.storage.get_random()
+        elif alternate_response_list:
+            '''
+            The case where there was no responses returned for the selected match
+            but a value exists for the statement the match is in response to.
+            '''
             self.chatbot.logger.info(
-                'No response to "{}" found. Selecting a random response.'.format(
-                    closest_match.text
+                'Selecting response from {} optimal alternate responses.'.format(
+                    len(alternate_response_list)
                 )
             )
+            response = self.select_response(
+                input_statement,
+                alternate_response_list,
+                self.chatbot.storage
+            )
 
-            # Set confidence to zero because a random response is selected
-            response.confidence = 0
+            response.confidence = closest_match.confidence
+            self.chatbot.logger.info('Alternate response selected. Using "{}"'.format(response.text))
+        else:
+            response = self.get_default_response(input_statement)
 
         return response

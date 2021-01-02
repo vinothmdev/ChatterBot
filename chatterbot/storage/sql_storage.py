@@ -11,18 +11,18 @@ class SQLStorageAdapter(StorageAdapter):
     It will check if tables are present, if they are not, it will attempt
     to create the required tables.
 
-    :keyword database_uri: eg: sqlite:///database_test.db',
+    :keyword database_uri: eg: sqlite:///database_test.sqlite3',
         The database_uri can be specified to choose database driver.
     :type database_uri: str
     """
 
     def __init__(self, **kwargs):
-        super(SQLStorageAdapter, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
 
-        self.database_uri = self.kwargs.get('database_uri', False)
+        self.database_uri = kwargs.get('database_uri', False)
 
         # None results in a sqlite in-memory database as the default
         if self.database_uri is None:
@@ -47,9 +47,6 @@ class SQLStorageAdapter(StorageAdapter):
             self.create_database()
 
         self.Session = sessionmaker(bind=self.engine, expire_on_commit=True)
-
-        # ChatterBot's internal query builder is not yet supported for this adapter
-        self.adapter_supports_queries = False
 
     def get_statement_model(self):
         """
@@ -118,6 +115,7 @@ class SQLStorageAdapter(StorageAdapter):
         exclude_text = kwargs.pop('exclude_text', None)
         exclude_text_words = kwargs.pop('exclude_text_words', [])
         persona_not_startswith = kwargs.pop('persona_not_startswith', None)
+        search_text_contains = kwargs.pop('search_text_contains', None)
 
         # Convert a single sting into a list if only one tag is provided
         if type(tags) == str:
@@ -151,6 +149,14 @@ class SQLStorageAdapter(StorageAdapter):
                 ~Statement.persona.startswith('bot:')
             )
 
+        if search_text_contains:
+            or_query = [
+                Statement.search_text.contains(word) for word in search_text_contains.split(' ')
+            ]
+            statements = statements.filter(
+                or_(*or_query)
+            )
+
         if order_by:
 
             if 'created_at' in order_by:
@@ -180,16 +186,17 @@ class SQLStorageAdapter(StorageAdapter):
         tags = set(kwargs.pop('tags', []))
 
         if 'search_text' not in kwargs:
-            kwargs['search_text'] = self.stemmer.get_bigram_pair_string(kwargs['text'])
+            kwargs['search_text'] = self.tagger.get_text_index_string(kwargs['text'])
 
         if 'search_in_response_to' not in kwargs:
-            if kwargs.get('in_response_to'):
-                kwargs['search_in_response_to'] = self.stemmer.get_bigram_pair_string(kwargs['in_response_to'])
+            in_response_to = kwargs.get('in_response_to')
+            if in_response_to:
+                kwargs['search_in_response_to'] = self.tagger.get_text_index_string(in_response_to)
 
         statement = Statement(**kwargs)
 
         for tag_name in tags:
-            tag = session.query(Tag).get(tag_name)
+            tag = session.query(Tag).filter_by(name=tag_name).first()
 
             if not tag:
                 # Create the tag
@@ -223,31 +230,33 @@ class SQLStorageAdapter(StorageAdapter):
 
         for statement in statements:
 
-            statement_model_object = Statement(
-                text=statement.text,
-                search_text=statement.search_text,
-                conversation=statement.conversation,
-                persona=statement.persona,
-                in_response_to=statement.in_response_to,
-                search_in_response_to=statement.search_in_response_to,
-                created_at=statement.created_at
-            )
+            statement_data = statement.serialize()
+            tag_data = statement_data.pop('tags', [])
+
+            statement_model_object = Statement(**statement_data)
 
             if not statement.search_text:
-                statement_model_object.search_text = self.stemmer.get_bigram_pair_string(statement.text)
+                statement_model_object.search_text = self.tagger.get_text_index_string(statement.text)
 
             if not statement.search_in_response_to and statement.in_response_to:
-                statement_model_object.search_in_response_to = self.stemmer.get_bigram_pair_string(statement.in_response_to)
+                statement_model_object.search_in_response_to = self.tagger.get_text_index_string(statement.in_response_to)
 
-            for tag_name in statement.tags:
+            new_tags = set(tag_data) - set(create_tags.keys())
+
+            if new_tags:
+                existing_tags = session.query(Tag).filter(
+                    Tag.name.in_(new_tags)
+                )
+
+                for existing_tag in existing_tags:
+                    create_tags[existing_tag.name] = existing_tag
+
+            for tag_name in tag_data:
                 if tag_name in create_tags:
                     tag = create_tags[tag_name]
                 else:
-                    tag = session.query(Tag).get(tag_name)
-
-                    if not tag:
-                        # Create the tag if it does not exist
-                        tag = Tag(name=tag_name)
+                    # Create the tag if it does not exist
+                    tag = Tag(name=tag_name)
 
                     create_tags[tag_name] = tag
 
@@ -290,13 +299,13 @@ class SQLStorageAdapter(StorageAdapter):
 
             record.created_at = statement.created_at
 
-            record.search_text = self.stemmer.get_bigram_pair_string(statement.text)
+            record.search_text = self.tagger.get_text_index_string(statement.text)
 
             if statement.in_response_to:
-                record.search_in_response_to = self.stemmer.get_bigram_pair_string(statement.in_response_to)
+                record.search_in_response_to = self.tagger.get_text_index_string(statement.in_response_to)
 
-            for tag_name in statement.tags:
-                tag = session.query(Tag).get(tag_name)
+            for tag_name in statement.get_tags():
+                tag = session.query(Tag).filter_by(name=tag_name).first()
 
                 if not tag:
                     # Create the record

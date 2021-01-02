@@ -1,5 +1,6 @@
 from tests.base_case import ChatBotTestCase
 from chatterbot.logic import LogicAdapter
+from chatterbot.conversation import Statement
 
 
 class LogicAdapterTestCase(ChatBotTestCase):
@@ -30,32 +31,22 @@ class LogicAdapterTestCase(ChatBotTestCase):
         with self.assertRaises(LogicAdapter.AdapterMethodNotImplementedError):
             self.adapter.process('')
 
-    def test_set_statement_comparison_function_string(self):
-        adapter = LogicAdapter(
-            self.chatbot,
-            statement_comparison_function='chatterbot.comparisons.levenshtein_distance'
-        )
-        self.assertTrue(callable(adapter.compare_statements))
+    def test_get_default_response(self):
+        response = self.adapter.get_default_response(Statement(text='...'))
 
-    def test_set_statement_comparison_function_callable(self):
-        from chatterbot.comparisons import levenshtein_distance
-        adapter = LogicAdapter(
-            self.chatbot,
-            statement_comparison_function=levenshtein_distance
-        )
-        self.assertTrue(callable(adapter.compare_statements))
+        self.assertEqual(response.text, '...')
 
-    def test_set_response_selection_method_string(self):
-        adapter = LogicAdapter(
-            self.chatbot,
-            response_selection_method='chatterbot.response_selection.get_first_response'
-        )
-        self.assertTrue(callable(adapter.select_response))
+    def test_get_default_response_from_options(self):
+        self.adapter.default_responses = [
+            Statement(text='The default')
+        ]
+        response = self.adapter.get_default_response(Statement(text='...'))
 
-    def test_set_response_selection_method_callable(self):
-        from chatterbot.response_selection import get_first_response
-        adapter = LogicAdapter(
-            self.chatbot,
-            response_selection_method=get_first_response
-        )
-        self.assertTrue(callable(adapter.select_response))
+        self.assertEqual(response.text, 'The default')
+
+    def test_get_default_response_from_database(self):
+        self.chatbot.storage.create(text='The default')
+
+        response = self.adapter.get_default_response(Statement(text='...'))
+
+        self.assertEqual(response.text, 'The default')

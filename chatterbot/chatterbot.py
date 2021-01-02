@@ -1,8 +1,7 @@
 import logging
 from chatterbot.storage import StorageAdapter
 from chatterbot.logic import LogicAdapter
-from chatterbot.input import InputAdapter
-from chatterbot.output import OutputAdapter
+from chatterbot.search import TextSearch, IndexedTextSearch
 from chatterbot import utils
 
 
@@ -16,39 +15,25 @@ class ChatBot(object):
 
         storage_adapter = kwargs.get('storage_adapter', 'chatterbot.storage.SQLStorageAdapter')
 
-        # These are logic adapters that are required for normal operation
-        system_logic_adapters = kwargs.get('system_logic_adapters', (
-            'chatterbot.logic.NoKnowledgeAdapter',
-        ))
-
         logic_adapters = kwargs.get('logic_adapters', [
             'chatterbot.logic.BestMatch'
         ])
 
-        input_adapter = kwargs.get('input_adapter', 'chatterbot.input.InputAdapter')
-
-        output_adapter = kwargs.get('output_adapter', 'chatterbot.output.OutputAdapter')
-
         # Check that each adapter is a valid subclass of it's respective parent
         utils.validate_adapter_class(storage_adapter, StorageAdapter)
-        utils.validate_adapter_class(input_adapter, InputAdapter)
-        utils.validate_adapter_class(output_adapter, OutputAdapter)
 
         # Logic adapters used by the chat bot
         self.logic_adapters = []
 
-        # Required logic adapters that must always be present
-        self.system_logic_adapters = []
-
         self.storage = utils.initialize_class(storage_adapter, **kwargs)
-        self.input = utils.initialize_class(input_adapter, self, **kwargs)
-        self.output = utils.initialize_class(output_adapter, self, **kwargs)
 
-        # Add required system logic adapter
-        for system_logic_adapter in system_logic_adapters:
-            utils.validate_adapter_class(system_logic_adapter, LogicAdapter)
-            logic_adapter = utils.initialize_class(system_logic_adapter, self, **kwargs)
-            self.system_logic_adapters.append(logic_adapter)
+        primary_search_algorithm = IndexedTextSearch(self, **kwargs)
+        text_search_algorithm = TextSearch(self, **kwargs)
+
+        self.search_algorithms = {
+            primary_search_algorithm.name: primary_search_algorithm,
+            text_search_algorithm.name: text_search_algorithm
+        }
 
         for adapter in logic_adapters:
             utils.validate_adapter_class(adapter, LogicAdapter)
@@ -71,29 +56,6 @@ class ChatBot(object):
         # Allow the bot to save input it receives so that it can learn
         self.read_only = kwargs.get('read_only', False)
 
-        if kwargs.get('initialize', True):
-            self.initialize()
-
-    def get_initialization_functions(self):
-        initialization_functions = utils.get_initialization_functions(
-            self, 'storage.stemmer'
-        )
-
-        for logic_adapter in self.get_logic_adapters():
-            logic_adapter_functions = utils.get_initialization_functions(
-                logic_adapter, 'compare_statements'
-            )
-            initialization_functions.update(logic_adapter_functions)
-
-        return initialization_functions
-
-    def initialize(self):
-        """
-        Do any work that needs to be done before the chatbot can process responses.
-        """
-        for function in self.get_initialization_functions().values():
-            function()
-
     def get_response(self, statement=None, **kwargs):
         """
         Return the bot's response based on the input.
@@ -101,9 +63,26 @@ class ChatBot(object):
         :param statement: An statement object or string.
         :returns: A response to the input.
         :rtype: Statement
+
+        :param additional_response_selection_parameters: Parameters to pass to the
+            chat bot's logic adapters to control response selection.
+        :type additional_response_selection_parameters: dict
+
+        :param persist_values_to_response: Values that should be saved to the response
+            that the chat bot generates.
+        :type persist_values_to_response: dict
         """
+        Statement = self.storage.get_object('statement')
+
+        additional_response_selection_parameters = kwargs.pop('additional_response_selection_parameters', {})
+
+        persist_values_to_response = kwargs.pop('persist_values_to_response', {})
+
         if isinstance(statement, str):
             kwargs['text'] = statement
+
+        if isinstance(statement, dict):
+            kwargs.update(statement)
 
         if statement is None and 'text' not in kwargs:
             raise self.ChatBotException(
@@ -111,51 +90,67 @@ class ChatBot(object):
                 'argument is required. Neither was provided.'
             )
 
-        if hasattr(statement, 'text'):
-            data = statement.serialize()
-            data.update(kwargs)
-            kwargs = data
+        if hasattr(statement, 'serialize'):
+            kwargs.update(**statement.serialize())
 
-        if isinstance(statement, dict):
-            statement.update(kwargs)
-            kwargs = statement
+        tags = kwargs.pop('tags', [])
 
-        input_statement = self.input.process_input(kwargs)
+        text = kwargs.pop('text')
+
+        input_statement = Statement(text=text, **kwargs)
+
+        input_statement.add_tags(*tags)
 
         # Preprocess the input statement
         for preprocessor in self.preprocessors:
             input_statement = preprocessor(input_statement)
 
-        response = self.generate_response(input_statement)
+        # Make sure the input statement has its search text saved
 
-        # Learn that the user's input was a valid response to the chat bot's previous output
-        previous_statement = self.get_latest_response(input_statement.conversation)
+        if not input_statement.search_text:
+            input_statement.search_text = self.storage.tagger.get_text_index_string(input_statement.text)
 
-        response.in_response_to = previous_statement
+        if not input_statement.search_in_response_to and input_statement.in_response_to:
+            input_statement.search_in_response_to = self.storage.tagger.get_text_index_string(input_statement.in_response_to)
+
+        response = self.generate_response(input_statement, additional_response_selection_parameters)
+
+        # Update any response data that needs to be changed
+        if persist_values_to_response:
+            for response_key in persist_values_to_response:
+                response_value = persist_values_to_response[response_key]
+                if response_key == 'tags':
+                    input_statement.add_tags(*response_value)
+                    response.add_tags(*response_value)
+                else:
+                    setattr(input_statement, response_key, response_value)
+                    setattr(response, response_key, response_value)
 
         if not self.read_only:
-            self.learn_response(input_statement, previous_statement)
+            self.learn_response(input_statement)
 
-        # Process the response output with the output adapter
-        return self.output.process_response(response)
+            # Save the response generated for the input
+            self.storage.create(**response.serialize())
 
-    def generate_response(self, input_statement):
+        return response
+
+    def generate_response(self, input_statement, additional_response_selection_parameters=None):
         """
         Return a response based on a given input statement.
 
         :param input_statement: The input statement to be processed.
         """
-        from collections import Counter
+        Statement = self.storage.get_object('statement')
 
         results = []
         result = None
         max_confidence = -1
 
-        for adapter in self.get_logic_adapters():
+        for adapter in self.logic_adapters:
             if adapter.can_process(input_statement):
 
-                output = adapter.process(input_statement)
-                results.append((output.confidence, output, ))
+                output = adapter.process(input_statement, additional_response_selection_parameters)
+                results.append(output)
 
                 self.logger.info(
                     '{} selected "{}" as a response with a confidence of {}'.format(
@@ -171,45 +166,73 @@ class ChatBot(object):
                     'Not processing the statement using {}'.format(adapter.class_name)
                 )
 
+        class ResultOption:
+            def __init__(self, statement, count=1):
+                self.statement = statement
+                self.count = count
+
         # If multiple adapters agree on the same statement,
         # then that statement is more likely to be the correct response
         if len(results) >= 3:
-            statements = tuple(
-                s[1] for s in results
-            )
-            count = Counter(statements)
-            most_common = count.most_common()
-            if most_common[0][1] > 1:
-                result = most_common[0][0]
-                max_confidence = utils.get_greatest_confidence(result, results)
+            result_options = {}
+            for result_option in results:
+                result_string = result_option.text + ':' + (result_option.in_response_to or '')
 
-        result.confidence = max_confidence
-        result.conversation = input_statement.conversation
-        result.persona = 'bot:' + self.name
+                if result_string in result_options:
+                    result_options[result_string].count += 1
+                    if result_options[result_string].statement.confidence < result_option.confidence:
+                        result_options[result_string].statement = result_option
+                else:
+                    result_options[result_string] = ResultOption(
+                        result_option
+                    )
 
-        return result
+            most_common = list(result_options.values())[0]
 
-    def learn_response(self, statement, previous_statement):
+            for result_option in result_options.values():
+                if result_option.count > most_common.count:
+                    most_common = result_option
+
+            if most_common.count > 1:
+                result = most_common.statement
+
+        response = Statement(
+            text=result.text,
+            in_response_to=input_statement.text,
+            conversation=input_statement.conversation,
+            persona='bot:' + self.name
+        )
+
+        response.confidence = result.confidence
+
+        return response
+
+    def learn_response(self, statement, previous_statement=None):
         """
         Learn that the statement provided is a valid response.
         """
+        if not previous_statement:
+            previous_statement = statement.in_response_to
+
+        if not previous_statement:
+            previous_statement = self.get_latest_response(statement.conversation)
+            if previous_statement:
+                previous_statement = previous_statement.text
+
         previous_statement_text = previous_statement
 
-        if previous_statement is not None:
-            previous_statement_text = previous_statement.text
+        if not isinstance(previous_statement, (str, type(None), )):
+            statement.in_response_to = previous_statement.text
+        elif isinstance(previous_statement, str):
+            statement.in_response_to = previous_statement
 
         self.logger.info('Adding "{}" as a response to "{}"'.format(
             statement.text,
             previous_statement_text
         ))
 
-        # Save the statement after selecting a response
-        return self.storage.create(
-            text=statement.text,
-            in_response_to=previous_statement_text,
-            conversation=statement.conversation,
-            tags=statement.tags
-        )
+        # Save the input statement
+        return self.storage.create(**statement.serialize())
 
     def get_latest_response(self, conversation):
         """
@@ -247,12 +270,6 @@ class ChatBot(object):
                 return latest_statement
 
         return None
-
-    def get_logic_adapters(self):
-        """
-        Return a list of all logic adapters being used, including system logic adapters.
-        """
-        return self.logic_adapters + self.system_logic_adapters
 
     class ChatBotException(Exception):
         pass

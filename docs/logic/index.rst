@@ -67,8 +67,8 @@ Setting parameters
        logic_adapters=[
            {
                "import_path": "chatterbot.logic.BestMatch",
-               "statement_comparison_function": "chatterbot.comparisons.levenshtein_distance",
-               "response_selection_method": "chatterbot.response_selection.get_first_response"
+               "statement_comparison_function": chatterbot.comparisons.LevenshteinDistance,
+               "response_selection_method": chatterbot.response_selection.get_first_response
            }
        ]
    )
@@ -113,21 +113,6 @@ This adapter is able to handle any combination of word and numeric operators.
    Bot: (4 + 4) = 8
 
 
-Low Confidence Response Adapter
-===============================
-
-This adapter returns a specified default response if a response can not be
-determined with a high amount of confidence.
-
-.. autofunction:: chatterbot.logic.LowConfidenceAdapter
-
-Low confidence response example
--------------------------------
-
-.. literalinclude:: ../../examples/default_response_example.py
-   :language: python
-
-
 Specific Response Adapter
 =========================
 
@@ -140,4 +125,10 @@ Specific response example
 -------------------------
 
 .. literalinclude:: ../../examples/specific_response_example.py
+   :language: python
+
+Low confidence response example
+-------------------------------
+
+.. literalinclude:: ../../examples/default_response_example.py
    :language: python

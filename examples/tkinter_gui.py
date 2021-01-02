@@ -23,9 +23,7 @@ class TkinterGUIExample(tk.Tk):
             logic_adapters=[
                 "chatterbot.logic.BestMatch"
             ],
-            input_adapter="chatterbot.input.InputAdapter",
-            output_adapter="chatterbot.output.OutputAdapter",
-            database_uri="../database.db"
+            database_uri="sqlite:///database.sqlite3"
         )
 
         self.title("Chatterbot")

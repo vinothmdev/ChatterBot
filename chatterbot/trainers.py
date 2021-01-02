@@ -2,10 +2,9 @@ import os
 import sys
 import csv
 import time
-from multiprocessing import Pool, Manager
 from dateutil import parser as date_parser
 from chatterbot.conversation import Statement
-from chatterbot.stemming import SimpleStemmer
+from chatterbot.tagging import PosLemmaTagger
 from chatterbot import utils
 
 
@@ -17,8 +16,6 @@ class Trainer(object):
            trainer. The environment variable ``CHATTERBOT_SHOW_TRAINING_PROGRESS``
            can also be set to control this. ``show_training_progress`` will override
            the environment variable if it is set.
-
-    :param str stemmer_language: The language that the stemmer uses to remove stopwords.
     """
 
     def __init__(self, chatbot, **kwargs):
@@ -29,10 +26,6 @@ class Trainer(object):
             'show_training_progress',
             environment_default
         )
-
-        self.stemmer = SimpleStemmer(language=kwargs.get(
-            'stemmer_language', 'english'
-        ))
 
     def get_preprocessed_statement(self, input_statement):
         """
@@ -77,7 +70,7 @@ class Trainer(object):
         """
         import json
         export = {'conversations': self._generate_export_data()}
-        with open(file_path, 'w+') as jsonfile:
+        with open(file_path, 'w+', encoding='utf8') as jsonfile:
             json.dump(export, jsonfile, ensure_ascii=False)
 
 
@@ -104,7 +97,7 @@ class ListTrainer(Trainer):
                     conversation_count + 1, len(conversation)
                 )
 
-            statement_search_text = self.stemmer.get_bigram_pair_string(text)
+            statement_search_text = self.chatbot.storage.tagger.get_text_index_string(text)
 
             statement = self.get_preprocessed_statement(
                 Statement(
@@ -158,7 +151,7 @@ class ChatterBotCorpusTrainer(Trainer):
 
                 for text in conversation:
 
-                    statement_search_text = self.stemmer.get_bigram_pair_string(text)
+                    statement_search_text = self.chatbot.storage.tagger.get_text_index_string(text)
 
                     statement = Statement(
                         text=text,
@@ -177,148 +170,13 @@ class ChatterBotCorpusTrainer(Trainer):
 
                     statements_to_create.append(statement)
 
-            self.chatbot.storage.create_many(statements_to_create)
-
-
-class TwitterTrainer(Trainer):
-    """
-    Allows the chat bot to be trained using data
-    gathered from Twitter.
-
-    :param random_seed_word: The seed word to be used to get random tweets from the Twitter API.
-                             This parameter is optional. By default it is the word 'random'.
-    :param twitter_lang: Language for results as ISO 639-1 code.
-                         This parameter is optional. Default is None (all languages).
-    """
-
-    def __init__(self, chatbot, **kwargs):
-        super().__init__(chatbot, **kwargs)
-        from twitter import Api as TwitterApi
-
-        # The word to be used as the first search term when searching for tweets
-        self.random_seed_word = kwargs.get('random_seed_word', 'random')
-        self.lang = kwargs.get('twitter_lang')
-
-        self.api = TwitterApi(
-            consumer_key=kwargs.get('twitter_consumer_key'),
-            consumer_secret=kwargs.get('twitter_consumer_secret'),
-            access_token_key=kwargs.get('twitter_access_token_key'),
-            access_token_secret=kwargs.get('twitter_access_token_secret')
-        )
-
-    def random_word(self, base_word, lang=None):
-        """
-        Generate a random word using the Twitter API.
-
-        Search twitter for recent tweets containing the term 'random'.
-        Then randomly select one word from those tweets and do another
-        search with that word. Return a randomly selected word from the
-        new set of results.
-        """
-        import random
-        random_tweets = self.api.GetSearch(term=base_word, count=5, lang=lang)
-        random_words = self.get_words_from_tweets(random_tweets)
-        random_word = random.choice(list(random_words))
-        tweets = self.api.GetSearch(term=random_word, count=5, lang=lang)
-        words = self.get_words_from_tweets(tweets)
-        word = random.choice(list(words))
-        return word
-
-    def get_words_from_tweets(self, tweets):
-        """
-        Given a list of tweets, return the set of
-        words from the tweets.
-        """
-        words = set()
-
-        for tweet in tweets:
-            tweet_words = tweet.text.split()
-
-            for word in tweet_words:
-                # If the word contains only letters with a length from 4 to 9
-                if word.isalpha() and len(word) > 3 and len(word) <= 9:
-                    words.add(word)
-
-        return words
-
-    def get_statements(self):
-        """
-        Returns list of random statements from the API.
-        """
-        from twitter import TwitterError
-        statements = []
-
-        # Generate a random word
-        random_word = self.random_word(self.random_seed_word, self.lang)
-
-        self.chatbot.logger.info('Requesting 50 random tweets containing the word {}'.format(random_word))
-        tweets = self.api.GetSearch(term=random_word, count=50, lang=self.lang)
-        for tweet in tweets:
-            statement = Statement(text=tweet.text)
-
-            if tweet.in_reply_to_status_id:
-                try:
-                    status = self.api.GetStatus(tweet.in_reply_to_status_id)
-                    statement.in_response_to = status.text
-                    statements.append(statement)
-                except TwitterError as error:
-                    self.chatbot.logger.warning(str(error))
-
-        self.chatbot.logger.info('Adding {} tweets with responses'.format(len(statements)))
-
-        return statements
-
-    def train(self):
-        for _ in range(0, 10):
-            statements = self.get_statements()
-            for statement in statements:
-                self.chatbot.storage.create(
-                    text=statement.text,
-                    in_response_to=statement.in_response_to,
-                    conversation=statement.conversation,
-                    tags=statement.tags
-                )
-
-
-def read_file(files, queue, preprocessors, stemmer):
-
-    statements_from_file = []
-
-    for tsv_file in files:
-        with open(tsv_file, 'r', encoding='utf-8') as tsv:
-            reader = csv.reader(tsv, delimiter='\t')
-
-            previous_statement_text = None
-            previous_statement_search_text = ''
-
-            for row in reader:
-                if len(row) > 0:
-                    statement = Statement(
-                        text=row[3],
-                        in_response_to=previous_statement_text,
-                        conversation='training',
-                        created_at=date_parser.parse(row[0]),
-                        persona=row[1]
-                    )
-
-                    for preprocessor in preprocessors:
-                        statement = preprocessor(statement)
-
-                    statement.search_text = stemmer.get_bigram_pair_string(statement.text)
-                    statement.search_in_response_to = previous_statement_search_text
-
-                    previous_statement_text = statement.text
-                    previous_statement_search_text = statement.search_text
-
-                    statements_from_file.append(statement)
-
-    queue.put(tuple(statements_from_file))
+            if statements_to_create:
+                self.chatbot.storage.create_many(statements_to_create)
 
 
 class UbuntuCorpusTrainer(Trainer):
     """
-    Allow chatbots to be trained with the data from
-    the Ubuntu Dialog Corpus.
+    Allow chatbots to be trained with the data from the Ubuntu Dialog Corpus.
     """
 
     def __init__(self, chatbot, **kwargs):
@@ -429,9 +287,8 @@ class UbuntuCorpusTrainer(Trainer):
 
     def train(self):
         import glob
-        from chatterbot.stemming import SimpleStemmer
 
-        stemmer = SimpleStemmer()
+        tagger = PosLemmaTagger(language=self.chatbot.storage.tagger.language)
 
         # Download and extract the Ubuntu dialog corpus if needed
         corpus_download_path = self.download(self.data_download_url)
@@ -445,9 +302,6 @@ class UbuntuCorpusTrainer(Trainer):
             '**', '**', '*.tsv'
         )
 
-        manager = Manager()
-        queue = manager.Queue()
-
         def chunks(items, items_per_chunk):
             for start_index in range(0, len(items), items_per_chunk):
                 end_index = start_index + items_per_chunk
@@ -457,55 +311,40 @@ class UbuntuCorpusTrainer(Trainer):
 
         file_groups = tuple(chunks(file_list, 10000))
 
-        argument_groups = tuple(
-            (
-                file_names,
-                queue,
-                self.chatbot.preprocessors,
-                stemmer,
-            ) for file_names in file_groups
-        )
-
-        pool_batches = chunks(argument_groups, 9)
-
-        total_batches = len(file_groups)
-        batch_number = 0
-
         start_time = time.time()
 
-        with Pool() as pool:
-            for pool_batch in pool_batches:
-                pool.starmap(read_file, pool_batch)
+        for tsv_files in file_groups:
 
-                while True:
+            statements_from_file = []
 
-                    if queue.empty():
-                        break
+            for tsv_file in tsv_files:
+                with open(tsv_file, 'r', encoding='utf-8') as tsv:
+                    reader = csv.reader(tsv, delimiter='\t')
 
-                    batch_number += 1
+                    previous_statement_text = None
+                    previous_statement_search_text = ''
 
-                    print('Training with batch {} with {} batches remaining...'.format(
-                        batch_number,
-                        total_batches - batch_number
-                    ))
+                    for row in reader:
+                        if len(row) > 0:
+                            statement = Statement(
+                                text=row[3],
+                                in_response_to=previous_statement_text,
+                                conversation='training',
+                                created_at=date_parser.parse(row[0]),
+                                persona=row[1]
+                            )
 
-                    self.chatbot.storage.create_many(queue.get())
+                            for preprocessor in self.chatbot.preprocessors:
+                                statement = preprocessor(statement)
 
-                elapsed_time = time.time() - start_time
-                time_per_batch = elapsed_time / batch_number
-                remaining_time = time_per_batch * (total_batches - batch_number)
+                            statement.search_text = tagger.get_text_index_string(statement.text)
+                            statement.search_in_response_to = previous_statement_search_text
 
-                print('{:.0f} hours {:.0f} minutes {:.0f} seconds elapsed.'.format(
-                    elapsed_time // 3600 % 24,
-                    elapsed_time // 60 % 60,
-                    elapsed_time % 60
-                ))
+                            previous_statement_text = statement.text
+                            previous_statement_search_text = statement.search_text
 
-                print('{:.0f} hours {:.0f} minutes {:.0f} seconds remaining.'.format(
-                    remaining_time // 3600 % 24,
-                    remaining_time // 60 % 60,
-                    remaining_time % 60
-                ))
-                print('---')
+                            statements_from_file.append(statement)
+
+            self.chatbot.storage.create_many(statements_from_file)
 
         print('Training took', time.time() - start_time, 'seconds.')

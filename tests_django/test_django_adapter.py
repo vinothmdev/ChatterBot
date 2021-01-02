@@ -90,6 +90,12 @@ class DjangoStorageAdapterTests(DjangoAdapterTestCase):
         random_statement = self.adapter.get_random()
         self.assertEqual(random_statement.text, statement.text)
 
+    def test_get_random_no_data(self):
+        from chatterbot.storage import StorageAdapter
+
+        with self.assertRaises(StorageAdapter.EmptyDatabaseException):
+            self.adapter.get_random()
+
     def test_filter_by_text_multiple_results(self):
         self.adapter.create(
             text="Do you like this?",
@@ -224,6 +230,20 @@ class DjangoAdapterFilterTests(DjangoAdapterTestCase):
         self.assertIn("Hi everyone!", results_text_list)
         self.assertIn("The air contains Oxygen.", results_text_list)
 
+    def test_filter_page_size(self):
+        self.adapter.create(text='A')
+        self.adapter.create(text='B')
+        self.adapter.create(text='C')
+
+        results = self.adapter.filter(page_size=2)
+
+        results_text_list = [statement.text for statement in results]
+
+        self.assertEqual(len(results_text_list), 3)
+        self.assertIn('A', results_text_list)
+        self.assertIn('B', results_text_list)
+        self.assertIn('C', results_text_list)
+
     def test_confidence(self):
         """
         Test that the confidence value is not saved to the database.
@@ -276,6 +296,27 @@ class DjangoAdapterFilterTests(DjangoAdapterTestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].text, 'Hi everyone!')
+
+    def test_search_text_contains(self):
+        self.adapter.create(text='Hello!', search_text='hello exclamation')
+        self.adapter.create(text='Hi everyone!', search_text='hi everyone')
+
+        results = list(self.adapter.filter(
+            search_text_contains='everyone'
+        ))
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].text, 'Hi everyone!')
+
+    def test_search_text_contains_multiple_matches(self):
+        self.adapter.create(text='Hello!', search_text='hello exclamation')
+        self.adapter.create(text='Hi everyone!', search_text='hi everyone')
+
+        results = list(self.adapter.filter(
+            search_text_contains='hello everyone'
+        ))
+
+        self.assertEqual(len(results), 2)
 
 
 class DjangoOrderingTests(DjangoAdapterTestCase):

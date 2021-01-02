@@ -22,14 +22,14 @@ class SpecificResponseAdapter(LogicAdapter):
         self.response_statement = Statement(text=output_text)
 
     def can_process(self, statement):
-        if statement == self.input_text:
+        if statement.text == self.input_text:
             return True
 
         return False
 
-    def process(self, statement):
+    def process(self, statement, additional_response_selection_parameters=None):
 
-        if statement == self.input_text:
+        if statement.text == self.input_text:
             self.response_statement.confidence = 1
         else:
             self.response_statement.confidence = 0

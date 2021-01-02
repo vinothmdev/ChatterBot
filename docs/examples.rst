@@ -4,6 +4,10 @@ Examples
 
 The following examples are available to help you get started with ChatterBot.
 
+.. note::
+   Before you run any example, you will need to install ChatterBot on your system.
+   See the :ref:`Setup guide <Installation>` for instructions.
+
 Simple Example
 ==============
 
@@ -46,21 +50,12 @@ inputs.
 .. literalinclude:: ../examples/math_and_time.py
    :language: python
 
-Gitter Example
-==============
-
-ChatterBot works great with chat rooms. An example for the
-popular service *Gitter* demonstrates this.
-
-.. literalinclude:: ../examples/gitter_example.py
-   :language: python
-
 Using SQL Adapter
 =================
 
 ChatterBot data can be saved and retrieved from SQL databases.
 
-.. literalinclude:: ../examples/sql/memory_sql_example.py
+.. literalinclude:: ../examples/memory_sql_example.py
    :language: python
 
 Read only mode
@@ -77,7 +72,7 @@ you can set `read_only=True` as a parameter when initializing the bot.
 More Examples
 =============
 
-Even more examples can be found in the `examples` directory in on GitHub:
+Even more examples can be found in the ``examples`` directory on GitHub:
 https://github.com/gunthercox/ChatterBot/tree/master/examples 
 
 .. _install MongoDB: https://docs.mongodb.com/manual/installation/

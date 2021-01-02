@@ -12,7 +12,7 @@ class UbuntuCorpusTrainerTestCase(ChatBotTestCase):
     """
 
     def setUp(self):
-        super(UbuntuCorpusTrainerTestCase, self).setUp()
+        super().setUp()
         self.trainer = UbuntuCorpusTrainer(
             self.chatbot,
             ubuntu_corpus_data_directory='./.ubuntu_test_data/',
@@ -20,7 +20,7 @@ class UbuntuCorpusTrainerTestCase(ChatBotTestCase):
         )
 
     def tearDown(self):
-        super(UbuntuCorpusTrainerTestCase, self).tearDown()
+        super().tearDown()
 
         self._remove_data()
 
@@ -162,7 +162,7 @@ class UbuntuCorpusTrainerTestCase(ChatBotTestCase):
         self._destroy_test_corpus()
 
         response = self.chatbot.get_response('Is anyone there?')
-        self.assertEqual(response, 'Yes')
+        self.assertEqual(response.text, 'Yes')
 
     def test_train_sets_search_text(self):
         """
@@ -176,7 +176,7 @@ class UbuntuCorpusTrainerTestCase(ChatBotTestCase):
         results = list(self.chatbot.storage.filter(text='Is anyone there?'))
 
         self.assertEqual(len(results), 2)
-        self.assertEqual(results[0].search_text, 'nyon')
+        self.assertEqual(results[0].search_text, 'VERB:anyone NOUN:there')
 
     def test_train_sets_search_in_response_to(self):
         """
@@ -190,7 +190,7 @@ class UbuntuCorpusTrainerTestCase(ChatBotTestCase):
         results = list(self.chatbot.storage.filter(in_response_to='Is anyone there?'))
 
         self.assertEqual(len(results), 2)
-        self.assertEqual(results[0].search_in_response_to, 'nyon')
+        self.assertEqual(results[0].search_in_response_to, 'VERB:anyone NOUN:there')
 
     def test_is_extracted(self):
         """

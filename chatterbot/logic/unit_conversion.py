@@ -1,7 +1,8 @@
 from chatterbot.logic import LogicAdapter
 from chatterbot.conversation import Statement
+from chatterbot.exceptions import OptionalDependencyImportError
+from chatterbot import languages
 from chatterbot import parsing
-from pint import UnitRegistry
 from mathparse import mathparse
 import re
 
@@ -16,14 +17,23 @@ class UnitConversion(LogicAdapter):
         Bot: '1000.0'
 
     :kwargs:
-        * *language* (``str``) --
-        The language is set to 'ENG' for English by default.
+        * *language* (``object``) --
+        The language is set to ``chatterbot.languages.ENG`` for English by default.
     """
 
     def __init__(self, chatbot, **kwargs):
         super().__init__(chatbot, **kwargs)
+        try:
+            from pint import UnitRegistry
+        except ImportError:
+            message = (
+                'Unable to import "pint".\n'
+                'Please install "pint" before using the UnitConversion logic adapter:\n'
+                'pip3 install pint'
+            )
+            raise OptionalDependencyImportError(message)
 
-        self.language = kwargs.get('language', 'ENG')
+        self.language = kwargs.get('language', languages.ENG)
         self.cache = {}
         self.patterns = [
             (
@@ -62,33 +72,28 @@ class UnitConversion(LogicAdapter):
                 lambda m: self.handle_matches(m)
             )
         ]
+        self.unit_registry = UnitRegistry()
 
-    def get_unit(self, ureg, unit_variations):
+    def get_unit(self, unit_variations):
         """
         Get the first match unit metric object supported by pint library
         given a variation of unit metric names (Ex:['HOUR', 'hour']).
-
-        :param ureg: unit registry which units are defined and handled
-        :type ureg: pint.registry.UnitRegistry object
 
         :param unit_variations: A list of strings with names of units
         :type unit_variations: str
         """
         for unit in unit_variations:
             try:
-                return getattr(ureg, unit)
+                return getattr(self.unit_registry, unit)
             except Exception:
                 continue
         return None
 
-    def get_valid_units(self, ureg, from_unit, target_unit):
+    def get_valid_units(self, from_unit, target_unit):
         """
-        Returns the firt match `pint.unit.Unit` object for from_unit and
+        Returns the first match `pint.unit.Unit` object for from_unit and
         target_unit strings from a possible variation of metric unit names
         supported by pint library.
-
-        :param ureg: unit registry which units are defined and handled
-        :type ureg: `pint.registry.UnitRegistry`
 
         :param from_unit: source metric unit
         :type from_unit: str
@@ -98,8 +103,8 @@ class UnitConversion(LogicAdapter):
         """
         from_unit_variations = [from_unit.lower(), from_unit.upper()]
         target_unit_variations = [target_unit.lower(), target_unit.upper()]
-        from_unit = self.get_unit(ureg, from_unit_variations)
-        target_unit = self.get_unit(ureg, target_unit_variations)
+        from_unit = self.get_unit(from_unit_variations)
+        target_unit = self.get_unit(target_unit_variations)
         return from_unit, target_unit
 
     def handle_matches(self, match):
@@ -110,37 +115,34 @@ class UnitConversion(LogicAdapter):
         :type: `_sre.SRE_Match`
         """
         response = Statement(text='')
-        try:
-            from_parsed = match.group("from")
-            target_parsed = match.group("target")
-            n_statement = match.group("number")
 
-            if n_statement == 'a' or n_statement == 'an':
-                n_statement = '1.0'
+        from_parsed = match.group("from")
+        target_parsed = match.group("target")
+        n_statement = match.group("number")
 
-            n = mathparse.parse(n_statement, self.language)
+        if n_statement == 'a' or n_statement == 'an':
+            n_statement = '1.0'
 
-            ureg = UnitRegistry()
-            from_parsed, target_parsed = self.get_valid_units(ureg, from_parsed, target_parsed)
+        n = mathparse.parse(n_statement, self.language.ISO_639.upper())
 
-            if from_parsed is None or target_parsed is None:
-                raise
+        from_parsed, target_parsed = self.get_valid_units(from_parsed, target_parsed)
 
-            from_value = ureg.Quantity(float(n), from_parsed)
+        if from_parsed is None or target_parsed is None:
+            response.confidence = 0.0
+        else:
+            from_value = self.unit_registry.Quantity(float(n), from_parsed)
             target_value = from_value.to(target_parsed)
             response.confidence = 1.0
             response.text = str(target_value.magnitude)
-        except Exception:
-            response.confidence = 0.0
-        finally:
-            return response
+
+        return response
 
     def can_process(self, statement):
         response = self.process(statement)
         self.cache[statement.text] = response
         return response.confidence == 1.0
 
-    def process(self, statement):
+    def process(self, statement, additional_response_selection_parameters=None):
         response = Statement(text='')
         input_text = statement.text
         try:

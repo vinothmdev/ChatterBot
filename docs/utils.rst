@@ -18,17 +18,6 @@ Class initialization
 .. autofunction:: chatterbot.utils.initialize_class
 
 
-NLTK corpus downloader
-
-.. autofunction:: chatterbot.utils.nltk_download_corpus
-
-
-Stopword removal
-----------------
-
-.. autofunction:: chatterbot.utils.remove_stopwords
-
-
 ChatBot response time
 ---------------------
 

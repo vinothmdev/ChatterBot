@@ -9,9 +9,8 @@ class DjangoStorageAdapter(StorageAdapter):
     """
 
     def __init__(self, **kwargs):
-        super(DjangoStorageAdapter, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
-        self.adapter_supports_queries = False
         self.django_app_name = kwargs.get(
             'django_app_name',
             constants.DEFAULT_DJANGO_APP_NAME
@@ -44,6 +43,7 @@ class DjangoStorageAdapter(StorageAdapter):
         exclude_text = kwargs.pop('exclude_text', None)
         exclude_text_words = kwargs.pop('exclude_text_words', [])
         persona_not_startswith = kwargs.pop('persona_not_startswith', None)
+        search_text_contains = kwargs.pop('search_text_contains', None)
 
         # Convert a single sting into a list if only one tag is provided
         if type(tags) == str:
@@ -73,6 +73,16 @@ class DjangoStorageAdapter(StorageAdapter):
                 persona__startswith='bot:'
             )
 
+        if search_text_contains:
+            or_query = Q()
+
+            for word in search_text_contains.split(' '):
+                or_query |= Q(search_text__contains=word)
+
+            statements = statements.filter(
+                or_query
+            )
+
         if order_by:
             statements = statements.order_by(*order_by)
 
@@ -90,11 +100,11 @@ class DjangoStorageAdapter(StorageAdapter):
         tags = kwargs.pop('tags', [])
 
         if 'search_text' not in kwargs:
-            kwargs['search_text'] = self.stemmer.get_bigram_pair_string(kwargs['text'])
+            kwargs['search_text'] = self.tagger.get_text_index_string(kwargs['text'])
 
         if 'search_in_response_to' not in kwargs:
             if kwargs.get('in_response_to'):
-                kwargs['search_in_response_to'] = self.stemmer.get_bigram_pair_string(kwargs['in_response_to'])
+                kwargs['search_in_response_to'] = self.tagger.get_text_index_string(kwargs['in_response_to'])
 
         statement = Statement(**kwargs)
 
@@ -121,27 +131,22 @@ class DjangoStorageAdapter(StorageAdapter):
 
         for statement in statements:
 
-            statement_model_object = Statement(
-                text=statement.text,
-                search_text=statement.search_text,
-                conversation=statement.conversation,
-                persona=statement.persona,
-                in_response_to=statement.in_response_to,
-                search_in_response_to=statement.search_in_response_to,
-                created_at=statement.created_at
-            )
+            statement_data = statement.serialize()
+            tag_data = statement_data.pop('tags', [])
+
+            statement_model_object = Statement(**statement_data)
 
             if not statement.search_text:
-                statement_model_object.search_text = self.stemmer.get_bigram_pair_string(statement.text)
+                statement_model_object.search_text = self.tagger.get_text_index_string(statement.text)
 
             if not statement.search_in_response_to and statement.in_response_to:
-                statement_model_object.search_in_response_to = self.stemmer.get_bigram_pair_string(statement.in_response_to)
+                statement_model_object.search_in_response_to = self.tagger.get_text_index_string(statement.in_response_to)
 
             statement_model_object.save()
 
             tags_to_add = []
 
-            for tag_name in statement.tags:
+            for tag_name in tag_data:
                 if tag_name in tag_cache:
                     tag = tag_cache[tag_name]
                 else:
@@ -163,10 +168,10 @@ class DjangoStorageAdapter(StorageAdapter):
         else:
             statement = Statement.objects.create(
                 text=statement.text,
-                search_text=self.stemmer.get_bigram_pair_string(statement.text),
+                search_text=self.tagger.get_text_index_string(statement.text),
                 conversation=statement.conversation,
                 in_response_to=statement.in_response_to,
-                search_in_response_to=self.stemmer.get_bigram_pair_string(statement.in_response_to),
+                search_in_response_to=self.tagger.get_text_index_string(statement.in_response_to),
                 created_at=statement.created_at
             )
 
@@ -182,7 +187,13 @@ class DjangoStorageAdapter(StorageAdapter):
         Returns a random statement from the database
         """
         Statement = self.get_model('statement')
-        return Statement.objects.order_by('?').first()
+
+        statement = Statement.objects.order_by('?').first()
+
+        if statement is None:
+            raise self.EmptyDatabaseException()
+
+        return statement
 
     def remove(self, statement_text):
         """
